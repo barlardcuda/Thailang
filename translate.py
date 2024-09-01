@@ -1,38 +1,49 @@
-from googletrans import Translator
+from deep_translator import GoogleTranslator
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def translate_to_thai(text):
-    translator = Translator()
-    translated = translator.translate(text, dest='th')
-    return translated.text
+def translate_line(line, translator):
+    if '=' in line:
+        key, value = line.split('=', 1)
+        try:
+            # Translate the value
+            translated_value = translator.translate(value.strip())
+            return f"{key}={translated_value}\n"
+        except Exception as e:
+            logging.error(f"Translation error for line '{line}': {e}")
+            return line  # Return the original line if translation fails
+    else:
+        return line  # Return the original line if it doesn't contain '='
 
-def translate_lang_file(input_file, output_file):
-    translator = Translator()
+def translate_file(input_file, output_file, src_lang='en', dest_lang='th', num_threads=12):
+    translator = GoogleTranslator(source=src_lang, target=dest_lang)
     
-    with open(input_file, 'r') as file:
-        lines = file.readlines()
+    try:
+        # Read the content of the input file
+        with open(input_file, 'r', encoding='utf-8') as infile:
+            lines = infile.readlines()
+        
+        total_lines = len(lines)
+        # Prepare to write the translated content
+        with open(output_file, 'w', encoding='utf-8') as outfile:
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                future_to_line = {executor.submit(translate_line, line, translator): line for line in lines}
+                for index, future in enumerate(as_completed(future_to_line), start=1):
+                    try:
+                        result = future.result()
+                        outfile.write(result)
+                    except Exception as e:
+                        logging.error(f"Error processing line: {e}")
+                    logging.info(f'{index}/{total_lines} lines processed')
 
-    with open(output_file, 'w') as file:
-        leng = len(lines)
-        x = 1
-        for line in lines:
-            if line.strip().startswith('##'):
-                file.write(line)
-                continue
-            
-            parts = line.split('#', 1)
-            key_value = parts[0].rstrip()
-            
-            if key_value:
-                if '=' in key_value:
-                    key, value = key_value.split('=', 1)
-                    translated_value = translate_to_thai(value)
-                    file.write(f"{key}={translated_value}\n")
-                else:
-                    file.write(line)
-            print(f'Translate {x}/{leng}')
-            x += 1
+    except FileNotFoundError:
+        logging.error(f"File not found: {input_file}")
+    except IOError as e:
+        logging.error(f"IO error: {e}")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     input_file = 'lang/cleaned_en_GB.lang'
-    output_file = 'lang/th_th.lang'
-    translate_lang_file(input_file, output_file)
+    output_file = 'lang/th_TH.lang'
+    translate_file(input_file, output_file)
+    logging.info("Translation completed.")
